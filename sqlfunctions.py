@@ -1,6 +1,7 @@
 import mysql.connector  
 
-# SQL FUNCTIONS FOR GODS
+# SQL FUNCTIONS
+
 
 def connect_db():
     conn = mysql.connector.connect(
@@ -12,6 +13,76 @@ def connect_db():
         database="smite_stats"
     )
     return conn
+
+def get_all_gods():
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    query = "SELECT name FROM gods ORDER BY name"
+    cursor.execute(query)
+
+    results = cursor.fetchall()
+    conn.close()
+
+    # Convert [('Bellona',), ('Thor',)] → ['Bellona', 'Thor']
+    return [row[0] for row in results]
+
+def insert_match(match_date, gamemode, role, player_god, enemy_god,
+                 kills, deaths, assists, game_time, win):
+
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    query = """
+    INSERT INTO matches (
+        match_date,
+        gamemode,
+        match_role,
+        player_god_id,
+        enemy_god_id,
+        kills,
+        deaths,
+        assists,
+        game_time,
+        win
+    )
+    VALUES (
+        %s,
+        %s,
+        %s,
+        (SELECT id FROM gods WHERE name = %s),
+        (SELECT id FROM gods WHERE name = %s),
+        %s,
+        %s,
+        %s,
+        %s,
+        %s
+    )
+    """
+
+    try:
+        cursor.execute(query, (
+            match_date,
+            gamemode,
+            role,
+            player_god,
+            enemy_god,
+            kills,
+            deaths,
+            assists,
+            game_time,
+            win
+        ))
+
+        conn.commit()
+        return True  # success
+
+    except Exception as e:
+        print("ERROR inserting match:", e)
+        return False
+
+    finally:
+        conn.close()
 
 def get_winrate(god_name):
     conn = connect_db()
@@ -25,20 +96,20 @@ def get_winrate(god_name):
     )
     """
 
-    cursor.execute(query,(god_name,))
+    cursor.execute(query, (god_name,))
     games, wins = cursor.fetchone()
+
     conn.close()
 
+    if games == 0:
+        return None
+
+    wins = wins or 0
     winrate = (wins / games) * 100
-    # return winrate
-    print(god_name, "Winrate:", round(winrate, 2), "%")
-
-print("Testing Get God winrate")
-get_winrate("Bellona")
-print("\n")
+    return round(winrate, 2)
 
 
-def get_enemy_winrate(god_name,enemy_god,role):
+def get_enemy_winrate(god_name, enemy_god, role):
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -47,7 +118,6 @@ def get_enemy_winrate(god_name,enemy_god,role):
     FROM matches
     WHERE player_god_id = (
         SELECT id FROM gods WHERE name = %s
-  
     )
     AND enemy_god_id = (
         SELECT id FROM gods WHERE name = %s
@@ -55,22 +125,17 @@ def get_enemy_winrate(god_name,enemy_god,role):
     AND match_role = %s
     """
 
-    cursor.execute(query,(god_name,enemy_god,role))
+    cursor.execute(query, (god_name, enemy_god, role))
     games, wins = cursor.fetchone()
 
     conn.close()
-     
 
     if games == 0:
-        return f"No games found for {god_name} vs {enemy_god} in {role}"
+        return None
 
+    wins = wins or 0
     winrate = (wins / games) * 100
-    # return winrate
-    print(god_name, "VS",enemy_god,"In",role,"\nWinrate:", round(winrate, 2), "%")
-
-print("Testing Get enenmy winrate")
-get_enemy_winrate("Bellona","Amaterasu","Solo")
-print("\n")
+    return round(winrate, 2)
 
 def get_kda(god_name):
     conn = connect_db()
@@ -90,15 +155,9 @@ def get_kda(god_name):
     conn.close()
 
     kda = result[0]
-    # return kda
-    print(god_name,"KDA:",round(kda, 2) if kda else 0)
-    
+    return round(kda, 2) if kda else None
 
-print("Testing KDA for God")
-get_kda("Bellona")
-print("\n")
-
-def get_most_played_gods():
+def get_most_played_gods(limit=5):
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -108,20 +167,15 @@ def get_most_played_gods():
     JOIN gods g ON m.player_god_id = g.id
     GROUP BY g.name
     ORDER BY games DESC
+    LIMIT %s
     """
 
-    cursor.execute(query)
-    results = cursor.fetchmany(5) 
-    # IF YOU WANT ALL GODS CHANGE TO .fetchall
+    cursor.execute(query, (limit,))
+    results = cursor.fetchall()
 
     conn.close()
-    print("Most Played Gods:")
-    for god, games in results:
-        print(god, "-", games, "games")
 
-print("Testing Get most played gods (top 5) ")
-get_most_played_gods()
-print("\n")
+    return results  # list of tuples
 
 def get_avg_game_time(god_name, role=None):
     conn = connect_db()
@@ -152,19 +206,12 @@ def get_avg_game_time(god_name, role=None):
 
     seconds = result[0]
 
-    if seconds:
-        minutes = int(seconds // 60)
-        seconds = int(seconds % 60)
-        print(god_name, "Average Game Time:", f"{minutes}:{seconds:02d}")
-    else:
-        print("No data found")
+    if not seconds:
+        return None
 
-print("Testing Avg Game Time")
-get_avg_game_time("Bellona")
-print("Testing Average time in a specific role")
-get_avg_game_time("Bellona", "Solo")
-print("\n")
-
+    minutes = int(seconds // 60)
+    seconds = int(seconds % 60)
+    return f"{minutes}:{seconds:02d}"
 
 
 def get_best_matchups(god_name, min_games=2):
@@ -252,11 +299,7 @@ def get_matchup_kda(player_god, enemy_god):
     conn.close()
 
     kda = result[0]
-
-    if kda:
-        print(player_god, "vs", enemy_god, "KDA:", round(kda, 2))
-    else:
-        print("No data found")
+    return round(kda, 2) if kda else None
 
 print("KDA for one enemy God")
 get_matchup_kda("Bellona","Amaterasu")
